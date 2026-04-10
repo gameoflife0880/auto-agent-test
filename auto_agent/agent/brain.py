@@ -8,13 +8,16 @@ import sqlite3
 import time
 from typing import Any
 
+from auto_agent.agent.builder import build_approved_idea
 from auto_agent.agent.research import run_analysis, run_rss_fetch
 from auto_agent.agent.synthesis import SynthesisError, run_synthesis
 from auto_agent.config import Config
 from auto_agent.db import (
     add_log,
     get_agent_state,
+    get_idea_by_id,
     get_setting,
+    update_idea_status,
     set_agent_status,
     set_setting,
 )
@@ -30,6 +33,7 @@ class AgentBrain:
         self._lock = asyncio.Lock()
         self._cancel_event = asyncio.Event()
         self._cycle_task: asyncio.Task[None] | None = None
+        self._implementation_task: asyncio.Task[None] | None = None
         self._scheduler_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
@@ -64,16 +68,8 @@ class AgentBrain:
         """Stop any active phase and return to idle."""
         self._cancel_event.set()
 
-        task = self._cycle_task
-        if task is not None and not task.done():
-            try:
-                await asyncio.wait_for(task, timeout=10)
-            except (TimeoutError, asyncio.TimeoutError):
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        await self._wait_for_task(self._cycle_task)
+        await self._wait_for_task(self._implementation_task)
 
         await self._transition("idle", "Agent stopped by user")
         return {"status": "idle"}
@@ -83,9 +79,17 @@ class AgentBrain:
         state = get_agent_state(self._conn)
         last_research_raw = get_setting(self._conn, "last_research_at")
         interval_hours = self._research_interval_hours()
+        current_idea_id = state["current_idea_id"]
+        current_idea_title = None
+        if current_idea_id:
+            current_idea = get_idea_by_id(self._conn, current_idea_id)
+            current_idea_title = (
+                str(current_idea["title"]) if current_idea is not None else None
+            )
         return {
             "status": state["status"],
-            "current_idea_id": state["current_idea_id"],
+            "current_idea_id": current_idea_id,
+            "current_idea_title": current_idea_title,
             "last_research_at": int(last_research_raw) if last_research_raw else None,
             "research_interval_hours": interval_hours,
             "codex_cli": "ok" if shutil.which("codex") else "not_found",
@@ -98,14 +102,21 @@ class AgentBrain:
             if state["status"] != "idle":
                 return {"started": False, "status": state["status"]}
 
+            self._cancel_event = asyncio.Event()
             set_agent_status(self._conn, "implementing", current_idea_id=idea_id)
+            update_idea_status(self._conn, idea_id, "implementing")
             await self._log(
                 f"Implementation triggered for approved idea {idea_id}",
                 category="implementation",
             )
+            updated = get_idea_by_id(self._conn, idea_id)
+            if updated is not None:
+                await emit_idea_update(updated)
             await emit_status("implementing", current_idea_id=idea_id)
-            await self._transition("idle", "Implementation handoff complete")
-            return {"started": True, "status": "idle"}
+            self._implementation_task = asyncio.create_task(
+                self._run_implementation(idea_id)
+            )
+            return {"started": True, "status": "implementing"}
 
     async def _run_research_cycle(self) -> None:
         """Execute researching -> synthesizing -> idle."""
@@ -181,11 +192,60 @@ class AgentBrain:
             await self._log("Scheduled research trigger fired", category="state")
             await self.start_research()
 
-    async def _transition(self, status: str, message: str) -> None:
+    async def _run_implementation(self, idea_id: str) -> None:
+        """Execute approved idea build and then return the agent to idle."""
+        try:
+            result = await build_approved_idea(
+                self._conn,
+                idea_id,
+                cancel_event=self._cancel_event,
+                on_output=self._on_implementation_output,
+                on_log=self._on_implementation_log,
+            )
+            if result.success:
+                await self._log(
+                    f"Idea {idea_id} marked completed at {result.project_path}",
+                    category="implementation",
+                )
+            else:
+                await self._log(
+                    f"Idea {idea_id} failed: {result.error}",
+                    level="error",
+                    category="implementation",
+                )
+        except Exception as exc:
+            update_idea_status(
+                self._conn,
+                idea_id,
+                "failed",
+                decline_reason=f"Unexpected implementation error: {exc}",
+            )
+            await self._log(
+                f"Implementation failed unexpectedly: {exc}",
+                level="error",
+                category="implementation",
+            )
+        finally:
+            updated = get_idea_by_id(self._conn, idea_id)
+            if updated is not None:
+                await emit_idea_update(updated)
+            await self._transition(
+                "idle",
+                "Implementation cycle finished",
+                current_idea_id=None,
+            )
+
+    async def _transition(
+        self,
+        status: str,
+        message: str,
+        *,
+        current_idea_id: str | None = None,
+    ) -> None:
         """Persist state transition and broadcast status/log events."""
-        set_agent_status(self._conn, status)
+        set_agent_status(self._conn, status, current_idea_id=current_idea_id)
         await self._log(message, category="state")
-        await emit_status(status)
+        await emit_status(status, current_idea_id=current_idea_id)
 
     async def _log(
         self,
@@ -212,3 +272,26 @@ class AgentBrain:
         """Forward live Codex output into the agent log."""
         add_log(self._conn, line, category="research")
         asyncio.create_task(emit_log(line, category="research"))
+
+    def _on_implementation_output(self, line: str) -> None:
+        """Forward live implementation output into the agent log."""
+        add_log(self._conn, line, category="implementation")
+        asyncio.create_task(emit_log(line, category="implementation"))
+
+    def _on_implementation_log(self, message: str, level: str) -> None:
+        """Log implementation lifecycle messages from the builder."""
+        add_log(self._conn, message, level=level, category="implementation")
+        asyncio.create_task(emit_log(message, level=level, category="implementation"))
+
+    async def _wait_for_task(self, task: asyncio.Task[None] | None) -> None:
+        """Wait for a task to finish with graceful cancellation fallback."""
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.wait_for(task, timeout=10)
+        except (TimeoutError, asyncio.TimeoutError):
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
