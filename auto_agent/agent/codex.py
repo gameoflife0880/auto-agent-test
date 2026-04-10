@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from contextlib import suppress
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -98,13 +99,7 @@ async def _stream_output(
     assert proc.stdout is not None  # guaranteed by PIPE  # noqa: S101
 
     while True:
-        # Check cancellation before blocking on the next line
-        if cancel_event is not None and cancel_event.is_set():
-            proc.terminate()
-            await proc.wait()
-            break
-
-        line_bytes = await proc.stdout.readline()
+        line_bytes = await _readline_or_cancel(proc, cancel_event)
         if not line_bytes:
             break
 
@@ -114,3 +109,32 @@ async def _stream_output(
             on_output(line)
 
     return lines
+
+
+async def _readline_or_cancel(
+    proc: asyncio.subprocess.Process,
+    cancel_event: asyncio.Event | None,
+) -> bytes:
+    """Read one stdout line unless *cancel_event* requests termination."""
+    assert proc.stdout is not None  # guaranteed by PIPE  # noqa: S101
+    if cancel_event is None:
+        return await proc.stdout.readline()
+
+    read_task = asyncio.create_task(proc.stdout.readline())
+    cancel_task = asyncio.create_task(cancel_event.wait())
+    done, pending = await asyncio.wait(
+        {read_task, cancel_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+
+    for task in pending:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+    if cancel_task in done and cancel_event.is_set():
+        proc.terminate()
+        await proc.wait()
+        return b""
+
+    return await read_task
