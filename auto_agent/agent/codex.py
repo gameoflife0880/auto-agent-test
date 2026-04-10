@@ -62,11 +62,15 @@ async def run_codex(
         "never",
         "exec",
         "--skip-git-repo-check",
-        prompt,
+        "-",
+        stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=working_dir,
     )
+    assert proc.stdin is not None  # guaranteed by PIPE  # noqa: S101
+    proc.stdin.write(prompt.encode())
+    proc.stdin.close()
 
     stderr_task: asyncio.Task[bytes] | None = None
     if proc.stderr is not None:

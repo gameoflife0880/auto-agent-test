@@ -42,6 +42,11 @@ def _make_fake_process(
     stderr_mock.read = AsyncMock(side_effect=lambda _size=-1: next(stderr_iter))
     proc.stderr = stderr_mock
 
+    stdin_mock = MagicMock()
+    stdin_mock.write = MagicMock()
+    stdin_mock.close = MagicMock()
+    proc.stdin = stdin_mock
+
     proc.terminate = MagicMock()
     proc.wait = AsyncMock()
     return proc
@@ -77,15 +82,19 @@ class TestRunCodex:
         assert result.stderr == "debug info\n"
         assert result.exit_code == 0
         mock_exec.assert_called_once()
-        args, _ = mock_exec.call_args
+        args, kwargs = mock_exec.call_args
         assert args[:6] == (
             "/usr/bin/codex",
             "--ask-for-approval",
             "never",
             "exec",
             "--skip-git-repo-check",
-            "Say hello",
+            "-",
         )
+        assert "Say hello" not in args
+        assert kwargs["stdin"] == asyncio.subprocess.PIPE
+        fake_proc.stdin.write.assert_called_once_with(b"Say hello")
+        fake_proc.stdin.close.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_streaming_callback(self) -> None:
@@ -103,6 +112,8 @@ class TestRunCodex:
             await run_codex("prompt", on_output=lines_received.append)
 
         assert lines_received == ["line1", "line2"]
+        fake_proc.stdin.write.assert_called_once_with(b"prompt")
+        fake_proc.stdin.close.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_codex_not_found(self) -> None:
@@ -150,6 +161,10 @@ class TestRunCodex:
             stderr_mock = MagicMock()
             stderr_mock.read = AsyncMock(return_value=b"")
             proc.stderr = stderr_mock
+            stdin_mock = MagicMock()
+            stdin_mock.write = MagicMock()
+            stdin_mock.close = MagicMock()
+            proc.stdin = stdin_mock
             proc.terminate = MagicMock()
             proc.wait = AsyncMock()
             return proc
@@ -210,6 +225,10 @@ class TestRunCodex:
         fake_proc.stderr = stderr_mock
         fake_proc.terminate = MagicMock()
         fake_proc.wait = AsyncMock()
+        stdin_mock = MagicMock()
+        stdin_mock.write = MagicMock()
+        stdin_mock.close = MagicMock()
+        fake_proc.stdin = stdin_mock
 
         with (
             patch("auto_agent.agent.codex.shutil.which", return_value="/usr/bin/codex"),
@@ -236,3 +255,34 @@ class TestRunCodex:
         mock_exec.assert_called_once()
         _, kwargs = mock_exec.call_args
         assert kwargs["cwd"] == "/tmp/project"
+        fake_proc.stdin.write.assert_called_once_with(b"prompt")
+        fake_proc.stdin.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_large_prompt_is_sent_via_stdin(self) -> None:
+        """Large prompts are written to stdin instead of argv."""
+        large_prompt = "a" * (200 * 1024)
+        fake_proc = _make_fake_process(stdout_lines=[b"ok\n"], returncode=0)
+
+        with (
+            patch("auto_agent.agent.codex.shutil.which", return_value="/usr/bin/codex"),
+            patch(
+                "asyncio.create_subprocess_exec", return_value=fake_proc
+            ) as mock_exec,
+        ):
+            result = await run_codex(large_prompt)
+
+        assert result.stdout == "ok"
+        args, kwargs = mock_exec.call_args
+        assert large_prompt not in args
+        assert args[:6] == (
+            "/usr/bin/codex",
+            "--ask-for-approval",
+            "never",
+            "exec",
+            "--skip-git-repo-check",
+            "-",
+        )
+        assert kwargs["stdin"] == asyncio.subprocess.PIPE
+        fake_proc.stdin.write.assert_called_once_with(large_prompt.encode())
+        fake_proc.stdin.close.assert_called_once()
