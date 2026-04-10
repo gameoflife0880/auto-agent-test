@@ -7,7 +7,9 @@ from auto_agent.config import load_config
 
 def main() -> None:
     config = load_config()
-    print(f"Starting auto-agent dashboard at http://{config.server_host}:{config.server_port}")
+    print(
+        f"Starting auto-agent dashboard at http://{config.server_host}:{config.server_port}"
+    )
     uvicorn.run(
         "auto_agent.server:app",
         host=config.server_host,
