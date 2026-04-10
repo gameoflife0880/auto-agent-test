@@ -13,17 +13,17 @@ from fastapi.staticfiles import StaticFiles
 
 from auto_agent.config import load_config
 from auto_agent.db import connect
-from auto_agent.routes import status
+from auto_agent.routes import config, data, status, ws
 
-_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup: load config, open DB.  Shutdown: close DB."""
-    config = load_config()
-    conn = connect(config.database)
-    app.state.config = config
+    cfg = load_config()
+    conn = connect(cfg.database)
+    app.state.config = cfg
     app.state.db = conn
     yield
     conn.close()
@@ -32,6 +32,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="auto-agent", lifespan=lifespan)
 
 app.include_router(status.router, prefix="/api")
+app.include_router(config.router, prefix="/api")
+app.include_router(data.router, prefix="/api")
+app.include_router(ws.router)
 
 if _STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
