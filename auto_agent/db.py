@@ -92,7 +92,7 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     """Open (and bootstrap) the database, returning a connection."""
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -159,9 +159,7 @@ def insert_article(
     return aid
 
 
-def get_articles(
-    conn: sqlite3.Connection, *, limit: int = 50
-) -> list[dict[str, Any]]:
+def get_articles(conn: sqlite3.Connection, *, limit: int = 50) -> list[dict[str, Any]]:
     rows = conn.execute(
         "SELECT * FROM articles ORDER BY created_at DESC LIMIT ?", (limit,)
     ).fetchall()
@@ -192,6 +190,13 @@ def get_tags(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def delete_tag(conn: sqlite3.Connection, tag_id: str) -> bool:
+    """Delete a tag by id. Returns True if a row was deleted."""
+    cur = conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
 # --- feeds ---------------------------------------------------------------- #
 
 
@@ -216,6 +221,13 @@ def insert_feed(
 def get_feeds(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute("SELECT * FROM feeds ORDER BY source").fetchall()
     return [dict(r) for r in rows]
+
+
+def delete_feed(conn: sqlite3.Connection, feed_id: str) -> bool:
+    """Delete a feed by id. Returns True if a row was deleted."""
+    cur = conn.execute("DELETE FROM feeds WHERE id = ?", (feed_id,))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 # --- ideas ---------------------------------------------------------------- #
@@ -255,9 +267,7 @@ def insert_idea(
     return iid
 
 
-def get_ideas(
-    conn: sqlite3.Connection, *, limit: int = 50
-) -> list[dict[str, Any]]:
+def get_ideas(conn: sqlite3.Connection, *, limit: int = 50) -> list[dict[str, Any]]:
     rows = conn.execute(
         "SELECT * FROM ideas ORDER BY created_at DESC LIMIT ?", (limit,)
     ).fetchall()
@@ -297,9 +307,7 @@ def add_log(
     conn.commit()
 
 
-def get_logs(
-    conn: sqlite3.Connection, *, limit: int = 100
-) -> list[dict[str, Any]]:
+def get_logs(conn: sqlite3.Connection, *, limit: int = 100) -> list[dict[str, Any]]:
     rows = conn.execute(
         "SELECT * FROM agent_log ORDER BY timestamp DESC LIMIT ?", (limit,)
     ).fetchall()
@@ -310,9 +318,7 @@ def get_logs(
 
 
 def get_setting(conn: sqlite3.Connection, key: str) -> str | None:
-    row = conn.execute(
-        "SELECT value FROM settings WHERE key = ?", (key,)
-    ).fetchone()
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
     return row["value"] if row else None
 
 

@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>auto-agent dashboard</title>
+<style>
+/* --- Reset & Base -------------------------------------------------------- */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background:#f5f5f5;color:#222;line-height:1.5;font-size:15px}
+
+/* --- Layout -------------------------------------------------------------- */
+.container{max-width:960px;margin:0 auto;padding:12px 16px}
+header{background:#fff;border-bottom:1px solid #ddd;padding:10px 16px;display:flex;align-items:center;gap:12px}
+header h1{font-size:18px;font-weight:600}
+.ws-dot{width:10px;height:10px;border-radius:50%;background:#ccc;display:inline-block}
+.ws-dot.connected{background:#2ecc40}
+
+/* --- Tabs ---------------------------------------------------------------- */
+.tabs{display:flex;gap:0;border-bottom:2px solid #ddd;margin-bottom:16px;background:#fff;padding:0 8px}
+.tab-btn{padding:10px 18px;cursor:pointer;border:none;background:none;font-size:14px;
+  font-weight:500;color:#666;border-bottom:2px solid transparent;margin-bottom:-2px;transition:.15s}
+.tab-btn:hover{color:#222}
+.tab-btn.active{color:#0069d9;border-bottom-color:#0069d9}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+
+/* --- Buttons ------------------------------------------------------------- */
+button,.btn{cursor:pointer;border:1px solid #ccc;background:#fff;padding:6px 14px;
+  border-radius:4px;font-size:13px;transition:.15s}
+button:hover,.btn:hover{background:#eee}
+.btn-primary{background:#0069d9;color:#fff;border-color:#0069d9}
+.btn-primary:hover{background:#0056b3}
+.btn-danger{background:#dc3545;color:#fff;border-color:#dc3545}
+.btn-danger:hover{background:#c82333}
+.btn-success{background:#28a745;color:#fff;border-color:#28a745}
+.btn-success:hover{background:#218838}
+.btn-sm{padding:3px 10px;font-size:12px}
+
+/* --- Badges -------------------------------------------------------------- */
+.badge{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;color:#fff}
+.badge-idle{background:#888}
+.badge-researching{background:#0069d9}
+.badge-synthesizing{background:#7b2d8e}
+.badge-implementing{background:#28a745}
+
+/* --- Tables -------------------------------------------------------------- */
+table{width:100%;border-collapse:collapse;background:#fff;margin-bottom:12px}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid #eee;font-size:13px}
+th{background:#fafafa;font-weight:600}
+
+/* --- Forms --------------------------------------------------------------- */
+input[type=text],input[type=url],input[type=number],textarea,select{
+  padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:13px;width:100%}
+textarea{resize:vertical;min-height:80px}
+.form-row{display:flex;gap:8px;margin-bottom:10px;align-items:flex-end}
+.form-row>*{flex:1}
+label{display:block;font-size:12px;font-weight:600;margin-bottom:3px;color:#555}
+
+/* --- Log viewer ---------------------------------------------------------- */
+#log-container{background:#1e1e1e;color:#ccc;font-family:"Cascadia Code",Consolas,"Courier New",monospace;
+  font-size:12px;padding:10px;border-radius:4px;height:420px;overflow-y:auto}
+#log-container .log-line{padding:1px 0;white-space:pre-wrap;word-break:break-all}
+.log-info{color:#aaa}
+.log-warning{color:#f0ad4e}
+.log-error{color:#ff4444}
+
+/* --- Status panel -------------------------------------------------------- */
+.status-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.status-card{background:#fff;border:1px solid #ddd;border-radius:6px;padding:16px}
+.status-card h3{font-size:13px;color:#666;margin-bottom:6px}
+
+/* --- Pagination ---------------------------------------------------------- */
+.pagination{display:flex;gap:8px;align-items:center;margin-top:8px}
+
+/* --- Misc ---------------------------------------------------------------- */
+.empty{color:#999;text-align:center;padding:32px 0;font-size:14px}
+.mt{margin-top:12px}
+.mb{margin-bottom:12px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>auto-agent</h1>
+  <span class="ws-dot" id="ws-indicator" title="WebSocket disconnected"></span>
+</header>
+
+<div class="container">
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="status">Status</button>
+    <button class="tab-btn" data-tab="news">News</button>
+    <button class="tab-btn" data-tab="ideas">Ideas</button>
+    <button class="tab-btn" data-tab="projects">Projects</button>
+    <button class="tab-btn" data-tab="logs">Logs</button>
+    <button class="tab-btn" data-tab="settings">Settings</button>
+  </nav>
+
+  <!-- ==================== STATUS ==================== -->
+  <div id="tab-status" class="tab-panel active">
+    <div class="status-grid">
+      <div class="status-card">
+        <h3>Agent Status</h3>
+        <span class="badge badge-idle" id="status-badge">idle</span>
+      </div>
+      <div class="status-card">
+        <h3>Codex CLI</h3>
+        <span id="codex-health">--</span>
+      </div>
+    </div>
+    <button class="btn btn-primary" id="btn-start">Start Research</button>
+    <button class="btn btn-danger" id="btn-stop">Stop</button>
+  </div>
+
+  <!-- ==================== NEWS ====================== -->
+  <div id="tab-news" class="tab-panel">
+    <table>
+      <thead><tr><th>Source</th><th>Title</th><th>Date</th><th>Score</th></tr></thead>
+      <tbody id="news-body"></tbody>
+    </table>
+    <div class="pagination">
+      <button class="btn btn-sm" id="news-prev">Prev</button>
+      <span id="news-page">1</span>
+      <button class="btn btn-sm" id="news-next">Next</button>
+    </div>
+  </div>
+
+  <!-- ==================== IDEAS ===================== -->
+  <div id="tab-ideas" class="tab-panel">
+    <div class="form-row mb">
+      <div>
+        <label>Filter by status</label>
+        <select id="idea-filter">
+          <option value="">All</option>
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="declined">Declined</option>
+          <option value="completed">Completed</option>
+          <option value="failed">Failed</option>
+        </select>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Title</th><th>Status</th><th>Effort</th><th>Actions</th></tr></thead>
+      <tbody id="ideas-body"></tbody>
+    </table>
+  </div>
+
+  <!-- ==================== PROJECTS ================== -->
+  <div id="tab-projects" class="tab-panel">
+    <table>
+      <thead><tr><th>Title</th><th>Status</th><th>Folder</th></tr></thead>
+      <tbody id="projects-body"></tbody>
+    </table>
+  </div>
+
+  <!-- ==================== LOGS ====================== -->
+  <div id="tab-logs" class="tab-panel">
+    <div class="form-row mb">
+      <div>
+        <label>Category</label>
+        <select id="log-cat-filter">
+          <option value="">All</option>
+          <option value="research">Research</option>
+          <option value="synthesis">Synthesis</option>
+          <option value="implementation">Implementation</option>
+          <option value="system">System</option>
+        </select>
+      </div>
+      <div>
+        <label>Level</label>
+        <select id="log-level-filter">
+          <option value="">All</option>
+          <option value="info">Info</option>
+          <option value="warning">Warning</option>
+          <option value="error">Error</option>
+        </select>
+      </div>
+    </div>
+    <div id="log-container"></div>
+  </div>
+
+  <!-- ==================== SETTINGS ================== -->
+  <div id="tab-settings" class="tab-panel">
+    <h3 class="mb">Synthesis Prompt</h3>
+    <textarea id="settings-prompt" rows="5"></textarea>
+    <button class="btn btn-primary mt" id="save-prompt">Save Prompt</button>
+
+    <h3 class="mt mb">Research Interval (hours)</h3>
+    <div class="form-row">
+      <div><input type="number" id="settings-interval" min="1" max="168"></div>
+      <div><button class="btn btn-primary" id="save-interval">Save</button></div>
+    </div>
+
+    <h3 class="mt mb">Tags</h3>
+    <div class="form-row">
+      <div><input type="text" id="tag-label" placeholder="Tag label"></div>
+      <div>
+        <select id="tag-type">
+          <option value="interest">Interest</option>
+          <option value="constraint">Constraint</option>
+        </select>
+      </div>
+      <div><button class="btn btn-success" id="add-tag">Add</button></div>
+    </div>
+    <table>
+      <thead><tr><th>Label</th><th>Type</th><th></th></tr></thead>
+      <tbody id="tags-body"></tbody>
+    </table>
+
+    <h3 class="mt mb">Feeds</h3>
+    <div class="form-row">
+      <div><input type="text" id="feed-source" placeholder="Source name"></div>
+      <div><input type="url" id="feed-url" placeholder="Feed URL"></div>
+      <div><button class="btn btn-success" id="add-feed">Add</button></div>
+    </div>
+    <table>
+      <thead><tr><th>Source</th><th>URL</th><th></th></tr></thead>
+      <tbody id="feeds-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+/* ========================================================================= */
+/*  Helpers                                                                  */
+/* ========================================================================= */
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => document.querySelectorAll(s);
+const api = (path, opts) => fetch('/api' + path, opts).then(r => r.json());
+const post = (path, body) => api(path, {
+  method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+});
+const put = (path, body) => api(path, {
+  method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+});
+const del = (path) => api(path, {method: 'DELETE'});
+
+function fmtDate(ts) {
+  if (!ts) return '--';
+  return new Date(ts * 1000).toLocaleString();
+}
+
+/* ========================================================================= */
+/*  Tab switching                                                            */
+/* ========================================================================= */
+$$('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    $$('.tab-btn').forEach(b => b.classList.remove('active'));
+    $$('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    $('#tab-' + btn.dataset.tab).classList.add('active');
+    loadTab(btn.dataset.tab);
+  });
+});
+
+function loadTab(name) {
+  const loaders = {status: loadStatus, news: loadNews, ideas: loadIdeas,
+    projects: loadProjects, logs: loadLogs, settings: loadSettings};
+  if (loaders[name]) loaders[name]();
+}
+
+/* ========================================================================= */
+/*  STATUS tab                                                               */
+/* ========================================================================= */
+function setStatusBadge(status) {
+  const b = $('#status-badge');
+  b.textContent = status;
+  b.className = 'badge badge-' + status;
+}
+
+async function loadStatus() {
+  const d = await api('/status');
+  setStatusBadge(d.status);
+  $('#codex-health').textContent = d.codex_cli === 'ok' ? 'Available' : 'Not found';
+}
+
+$('#btn-start').addEventListener('click', async () => {
+  await post('/status', {action: 'start_research'});
+  loadStatus();
+});
+$('#btn-stop').addEventListener('click', async () => {
+  await post('/status', {action: 'stop'});
+  loadStatus();
+});
+
+/* ========================================================================= */
+/*  NEWS tab                                                                 */
+/* ========================================================================= */
+let newsPage = 0;
+const NEWS_PER_PAGE = 20;
+
+async function loadNews() {
+  const d = await api('/articles?limit=' + NEWS_PER_PAGE + '&offset=' + (newsPage * NEWS_PER_PAGE));
+  const tb = $('#news-body');
+  if (!d.items.length) { tb.innerHTML = '<tr><td colspan="4" class="empty">No articles yet</td></tr>'; return; }
+  tb.innerHTML = d.items.map(a =>
+    `<tr><td>${esc(a.source)}</td><td>${esc(a.title)}</td><td>${fmtDate(a.published || a.created_at)}</td><td>${(a.relevance_score || 0).toFixed(2)}</td></tr>`
+  ).join('');
+  $('#news-page').textContent = newsPage + 1;
+  $('#news-prev').disabled = newsPage === 0;
+  $('#news-next').disabled = !d.has_more;
+}
+
+$('#news-prev').addEventListener('click', () => { if (newsPage > 0) { newsPage--; loadNews(); } });
+$('#news-next').addEventListener('click', () => { newsPage++; loadNews(); });
+
+/* ========================================================================= */
+/*  IDEAS tab                                                                */
+/* ========================================================================= */
+async function loadIdeas() {
+  const f = $('#idea-filter').value;
+  const q = f ? '?status=' + f : '';
+  const d = await api('/ideas' + q);
+  const tb = $('#ideas-body');
+  if (!d.items.length) { tb.innerHTML = '<tr><td colspan="4" class="empty">No ideas yet</td></tr>'; return; }
+  tb.innerHTML = d.items.map(i => {
+    let actions = '';
+    if (i.status === 'pending') {
+      actions = `<button class="btn btn-sm btn-success" onclick="approveIdea('${i.id}')">Approve</button> `
+        + `<button class="btn btn-sm btn-danger" onclick="declineIdea('${i.id}')">Decline</button>`;
+    }
+    return `<tr><td>${esc(i.title)}</td><td><span class="badge badge-${i.status === 'idle' ? 'idle' : i.status === 'approved' ? 'implementing' : 'idle'}">${esc(i.status)}</span></td><td>${esc(i.effort_estimate)}</td><td>${actions}</td></tr>`;
+  }).join('');
+}
+
+$('#idea-filter').addEventListener('change', loadIdeas);
+
+window.approveIdea = async function(id) {
+  await put('/ideas/' + id, {status: 'approved'});
+  loadIdeas();
+};
+
+window.declineIdea = async function(id) {
+  const reason = prompt('Reason for declining:');
+  if (reason === null) return;
+  await put('/ideas/' + id, {status: 'declined', decline_reason: reason});
+  loadIdeas();
+};
+
+/* ========================================================================= */
+/*  PROJECTS tab                                                             */
+/* ========================================================================= */
+async function loadProjects() {
+  const d = await api('/ideas?status=completed');
+  const tb = $('#projects-body');
+  const items = d.items;
+  if (!items.length) { tb.innerHTML = '<tr><td colspan="3" class="empty">No completed projects</td></tr>'; return; }
+  tb.innerHTML = items.map(i =>
+    `<tr><td>${esc(i.title)}</td><td>${esc(i.status)}</td><td>${esc(i.project_path || '--')}</td></tr>`
+  ).join('');
+}
+
+/* ========================================================================= */
+/*  LOGS tab                                                                 */
+/* ========================================================================= */
+const logLines = [];
+const MAX_LOG_LINES = 500;
+
+async function loadLogs() {
+  const d = await api('/logs?limit=200');
+  logLines.length = 0;
+  d.items.reverse().forEach(l => logLines.push(l));
+  renderLogs();
+}
+
+function renderLogs() {
+  const catF = $('#log-cat-filter').value;
+  const lvlF = $('#log-level-filter').value;
+  const filtered = logLines.filter(l =>
+    (!catF || l.category === catF) && (!lvlF || l.level === lvlF)
+  );
+  const c = $('#log-container');
+  c.innerHTML = filtered.map(l =>
+    `<div class="log-line log-${l.level}">[${fmtDate(l.timestamp)}] [${l.category}] [${l.level}] ${esc(l.message)}</div>`
+  ).join('');
+  c.scrollTop = c.scrollHeight;
+}
+
+$('#log-cat-filter').addEventListener('change', renderLogs);
+$('#log-level-filter').addEventListener('change', renderLogs);
+
+/* ========================================================================= */
+/*  SETTINGS tab                                                             */
+/* ========================================================================= */
+async function loadSettings() {
+  const d = await api('/config');
+  $('#settings-prompt').value = d.synthesis_prompt || '';
+  $('#settings-interval').value = d.research_interval_hours;
+  loadTags();
+  loadFeeds();
+}
+
+$('#save-prompt').addEventListener('click', async () => {
+  await post('/config', {synthesis_prompt: $('#settings-prompt').value});
+});
+
+$('#save-interval').addEventListener('click', async () => {
+  await post('/config', {research_interval_hours: parseInt($('#settings-interval').value, 10)});
+});
+
+/* --- Tags --- */
+async function loadTags() {
+  const d = await api('/tags');
+  const tb = $('#tags-body');
+  if (!d.items.length) { tb.innerHTML = '<tr><td colspan="3" class="empty">No tags</td></tr>'; return; }
+  tb.innerHTML = d.items.map(t =>
+    `<tr><td>${esc(t.label)}</td><td>${esc(t.type)}</td><td><button class="btn btn-sm btn-danger" onclick="removeTag('${t.id}')">Remove</button></td></tr>`
+  ).join('');
+}
+
+$('#add-tag').addEventListener('click', async () => {
+  const label = $('#tag-label').value.trim();
+  if (!label) return;
+  await post('/tags', {label, tag_type: $('#tag-type').value});
+  $('#tag-label').value = '';
+  loadTags();
+});
+
+window.removeTag = async function(id) {
+  await del('/tags/' + id);
+  loadTags();
+};
+
+/* --- Feeds --- */
+async function loadFeeds() {
+  const d = await api('/feeds');
+  const tb = $('#feeds-body');
+  if (!d.items.length) { tb.innerHTML = '<tr><td colspan="3" class="empty">No feeds</td></tr>'; return; }
+  tb.innerHTML = d.items.map(f =>
+    `<tr><td>${esc(f.source)}</td><td>${esc(f.url)}</td><td><button class="btn btn-sm btn-danger" onclick="removeFeed('${f.id}')">Remove</button></td></tr>`
+  ).join('');
+}
+
+$('#add-feed').addEventListener('click', async () => {
+  const source = $('#feed-source').value.trim();
+  const url = $('#feed-url').value.trim();
+  if (!source || !url) return;
+  await post('/feeds', {source, url});
+  $('#feed-source').value = '';
+  $('#feed-url').value = '';
+  loadFeeds();
+});
+
+window.removeFeed = async function(id) {
+  await del('/feeds/' + id);
+  loadFeeds();
+};
+
+/* ========================================================================= */
+/*  WebSocket                                                                */
+/* ========================================================================= */
+let ws = null;
+let wsRetryDelay = 1000;
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws/events');
+
+  ws.onopen = () => {
+    $('#ws-indicator').classList.add('connected');
+    $('#ws-indicator').title = 'WebSocket connected';
+    wsRetryDelay = 1000;
+  };
+
+  ws.onclose = () => {
+    $('#ws-indicator').classList.remove('connected');
+    $('#ws-indicator').title = 'WebSocket disconnected';
+    setTimeout(connectWS, wsRetryDelay);
+    wsRetryDelay = Math.min(wsRetryDelay * 2, 30000);
+  };
+
+  ws.onmessage = (evt) => {
+    let msg;
+    try { msg = JSON.parse(evt.data); } catch { return; }
+    if (msg.type === 'log') {
+      logLines.push(msg.data);
+      if (logLines.length > MAX_LOG_LINES) logLines.shift();
+      if ($('#tab-logs').classList.contains('active')) renderLogs();
+    } else if (msg.type === 'status') {
+      setStatusBadge(msg.data.status);
+    } else if (msg.type === 'idea_update') {
+      if ($('#tab-ideas').classList.contains('active')) loadIdeas();
+    }
+  };
+}
+
+/* ========================================================================= */
+/*  XSS helper                                                               */
+/* ========================================================================= */
+function esc(s) {
+  if (s == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+/* ========================================================================= */
+/*  Boot                                                                     */
+/* ========================================================================= */
+loadStatus();
+connectWS();
+</script>
+</body>
+</html>
