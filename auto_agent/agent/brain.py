@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import shutil
 import sqlite3
 import time
 from typing import Any
@@ -43,7 +42,7 @@ class AgentBrain:
 
     async def shutdown(self) -> None:
         """Gracefully stop current work and scheduler."""
-        await self.stop()
+        await self.stop(wait_for_current_task=True)
 
         if self._scheduler_task is not None:
             self._scheduler_task.cancel()
@@ -64,12 +63,13 @@ class AgentBrain:
             self._cycle_task = asyncio.create_task(self._run_research_cycle())
             return {"started": True, "status": "researching"}
 
-    async def stop(self) -> dict[str, Any]:
+    async def stop(self, *, wait_for_current_task: bool = False) -> dict[str, Any]:
         """Stop any active phase and return to idle."""
         self._cancel_event.set()
 
-        await self._wait_for_task(self._cycle_task)
-        await self._wait_for_task(self._implementation_task)
+        timeout: float | None = None if wait_for_current_task else 10
+        await self._wait_for_task(self._cycle_task, timeout=timeout)
+        await self._wait_for_task(self._implementation_task, timeout=timeout)
 
         await self._transition("idle", "Agent stopped by user")
         return {"status": "idle"}
@@ -92,7 +92,6 @@ class AgentBrain:
             "current_idea_title": current_idea_title,
             "last_research_at": int(last_research_raw) if last_research_raw else None,
             "research_interval_hours": interval_hours,
-            "codex_cli": "ok" if shutil.which("codex") else "not_found",
         }
 
     async def trigger_implementation(self, idea_id: str) -> dict[str, Any]:
@@ -283,12 +282,20 @@ class AgentBrain:
         add_log(self._conn, message, level=level, category="implementation")
         asyncio.create_task(emit_log(message, level=level, category="implementation"))
 
-    async def _wait_for_task(self, task: asyncio.Task[None] | None) -> None:
+    async def _wait_for_task(
+        self,
+        task: asyncio.Task[None] | None,
+        *,
+        timeout: float | None,
+    ) -> None:
         """Wait for a task to finish with graceful cancellation fallback."""
         if task is None or task.done():
             return
         try:
-            await asyncio.wait_for(task, timeout=10)
+            if timeout is None:
+                await task
+            else:
+                await asyncio.wait_for(task, timeout=timeout)
         except (TimeoutError, asyncio.TimeoutError):
             task.cancel()
             try:

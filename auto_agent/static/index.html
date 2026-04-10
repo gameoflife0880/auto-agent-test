@@ -16,6 +16,8 @@ header{background:#fff;border-bottom:1px solid #ddd;padding:10px 16px;display:fl
 header h1{font-size:18px;font-weight:600}
 .ws-dot{width:10px;height:10px;border-radius:50%;background:#ccc;display:inline-block}
 .ws-dot.connected{background:#2ecc40}
+.banner{display:none;padding:10px 12px;border-radius:6px;margin-bottom:12px;font-size:13px}
+.banner-error{display:block;background:#fdecea;border:1px solid #f5c2c7;color:#842029}
 
 /* --- Tabs ---------------------------------------------------------------- */
 .tabs{display:flex;gap:0;border-bottom:2px solid #ddd;margin-bottom:16px;background:#fff;padding:0 8px}
@@ -78,6 +80,10 @@ label{display:block;font-size:12px;font-weight:600;margin-bottom:3px;color:#555}
 .empty{color:#999;text-align:center;padding:32px 0;font-size:14px}
 .mt{margin-top:12px}
 .mb{margin-bottom:12px}
+.toast-wrap{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:9999}
+.toast{background:#222;color:#fff;border-radius:6px;padding:10px 12px;font-size:12px;max-width:320px;opacity:0;transform:translateY(6px);transition:.2s}
+.toast.show{opacity:1;transform:translateY(0)}
+.toast.error{background:#b42318}
 </style>
 </head>
 <body>
@@ -88,6 +94,7 @@ label{display:block;font-size:12px;font-weight:600;margin-bottom:3px;color:#555}
 </header>
 
 <div class="container">
+  <div id="health-banner" class="banner" role="alert"></div>
   <nav class="tabs">
     <button class="tab-btn active" data-tab="status">Status</button>
     <button class="tab-btn" data-tab="news">News</button>
@@ -238,13 +245,30 @@ label{display:block;font-size:12px;font-weight:600;margin-bottom:3px;color:#555}
   </div>
 </div>
 
+<div id="toast-wrap" class="toast-wrap" aria-live="polite"></div>
+
 <script>
 /* ========================================================================= */
 /*  Helpers                                                                  */
 /* ========================================================================= */
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
-const api = (path, opts) => fetch('/api' + path, opts).then(r => r.json());
+async function api(path, opts) {
+  const r = await fetch('/api' + path, opts);
+  let payload = null;
+  try {
+    payload = await r.json();
+  } catch {
+    payload = null;
+  }
+  if (!r.ok) {
+    const message = payload && typeof payload.detail === 'string'
+      ? payload.detail
+      : `Request failed (${r.status}) for ${path}`;
+    throw new Error(message);
+  }
+  return payload;
+}
 const post = (path, body) => api(path, {
   method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
 });
@@ -256,6 +280,54 @@ const del = (path) => api(path, {method: 'DELETE'});
 function fmtDate(ts) {
   if (!ts) return '--';
   return new Date(ts * 1000).toLocaleString();
+}
+
+function showToast(message, level = 'error') {
+  const wrap = $('#toast-wrap');
+  const t = document.createElement('div');
+  t.className = `toast ${level}`;
+  t.textContent = message;
+  wrap.appendChild(t);
+  requestAnimationFrame(() => t.classList.add('show'));
+  setTimeout(() => {
+    t.classList.remove('show');
+    setTimeout(() => t.remove(), 200);
+  }, 3500);
+}
+
+function pushLocalErrorLog(message) {
+  const line = {
+    timestamp: Math.floor(Date.now() / 1000),
+    level: 'error',
+    category: 'system',
+    message,
+  };
+  logLines.push(line);
+  if (logLines.length > MAX_LOG_LINES) logLines.shift();
+  if ($('#tab-logs').classList.contains('active')) renderLogs();
+}
+
+function showHealthBanner(message) {
+  const el = $('#health-banner');
+  if (!message) {
+    el.className = 'banner';
+    el.textContent = '';
+    return;
+  }
+  el.className = 'banner banner-error';
+  el.textContent = message;
+}
+
+async function runOperation(action, failureMessage) {
+  try {
+    return await action();
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    const message = `${failureMessage}: ${detail}`;
+    pushLocalErrorLog(message);
+    showToast(message, 'error');
+    throw err;
+  }
 }
 
 /* ========================================================================= */
@@ -295,19 +367,36 @@ function setCurrentBuild(currentIdeaTitle, currentIdeaId) {
 }
 
 async function loadStatus() {
-  const d = await api('/status');
+  const d = await runOperation(
+    () => api('/status'),
+    'Failed to load status'
+  );
   setStatusBadge(d.status);
-  $('#codex-health').textContent = d.codex_cli === 'ok' ? 'Available' : 'Not found';
+  if (d.codex_health && d.codex_health.status === 'ok') {
+    const version = d.codex_health.version ? ` (${d.codex_health.version})` : '';
+    $('#codex-health').textContent = `Available${version}`;
+    showHealthBanner('');
+  } else {
+    $('#codex-health').textContent = 'Unavailable';
+    const reason = d.codex_health && d.codex_health.error ? ` (${d.codex_health.error})` : '';
+    showHealthBanner(`Codex CLI is unavailable${reason}`);
+  }
   setCurrentBuild(d.current_idea_title, d.current_idea_id);
 }
 
 $('#btn-start').addEventListener('click', async () => {
-  await post('/status', {action: 'start_research'});
-  loadStatus();
+  await runOperation(
+    () => post('/status', {action: 'start_research'}),
+    'Failed to start research'
+  );
+  await loadStatus();
 });
 $('#btn-stop').addEventListener('click', async () => {
-  await post('/status', {action: 'stop'});
-  loadStatus();
+  await runOperation(
+    () => post('/status', {action: 'stop'}),
+    'Failed to stop agent'
+  );
+  await loadStatus();
 });
 
 /* ========================================================================= */
@@ -317,7 +406,10 @@ let newsPage = 0;
 const NEWS_PER_PAGE = 20;
 
 async function loadNews() {
-  const d = await api('/articles?limit=' + NEWS_PER_PAGE + '&offset=' + (newsPage * NEWS_PER_PAGE));
+  const d = await runOperation(
+    () => api('/articles?limit=' + NEWS_PER_PAGE + '&offset=' + (newsPage * NEWS_PER_PAGE)),
+    'Failed to load articles'
+  );
   const tb = $('#news-body');
   if (!d.items.length) { tb.innerHTML = '<tr><td colspan="4" class="empty">No articles yet</td></tr>'; return; }
   tb.innerHTML = d.items.map(a =>
@@ -337,7 +429,7 @@ $('#news-next').addEventListener('click', () => { newsPage++; loadNews(); });
 async function loadIdeas() {
   const f = $('#idea-filter').value;
   const q = f ? '?status=' + f : '';
-  const d = await api('/ideas' + q);
+  const d = await runOperation(() => api('/ideas' + q), 'Failed to load ideas');
   const tb = $('#ideas-body');
   if (!d.items.length) { tb.innerHTML = '<tr><td colspan="9" class="empty">No ideas yet</td></tr>'; return; }
   tb.innerHTML = d.items.map(i => {
@@ -364,22 +456,22 @@ async function loadIdeas() {
 $('#idea-filter').addEventListener('change', loadIdeas);
 
 window.approveIdea = async function(id) {
-  await post('/ideas/' + id + '/approve', {});
-  loadIdeas();
+  await runOperation(() => post('/ideas/' + id + '/approve', {}), 'Failed to approve idea');
+  await loadIdeas();
 };
 
 window.declineIdea = async function(id) {
   const reason = prompt('Reason for declining:');
   if (reason === null) return;
-  await post('/ideas/' + id + '/decline', {reason});
-  loadIdeas();
+  await runOperation(() => post('/ideas/' + id + '/decline', {reason}), 'Failed to decline idea');
+  await loadIdeas();
 };
 
 /* ========================================================================= */
 /*  PROJECTS tab                                                             */
 /* ========================================================================= */
 async function loadProjects() {
-  const d = await api('/ideas');
+  const d = await runOperation(() => api('/ideas'), 'Failed to load projects');
   const tb = $('#projects-body');
   const items = d.items.filter(i => i.status === 'completed' || i.status === 'failed');
   if (!items.length) { tb.innerHTML = '<tr><td colspan="4" class="empty">No built projects yet</td></tr>'; return; }
@@ -395,7 +487,7 @@ const logLines = [];
 const MAX_LOG_LINES = 500;
 
 async function loadLogs() {
-  const d = await api('/logs?limit=200');
+  const d = await runOperation(() => api('/logs?limit=200'), 'Failed to load logs');
   logLines.length = 0;
   d.items.reverse().forEach(l => logLines.push(l));
   renderLogs();
@@ -421,7 +513,7 @@ $('#log-level-filter').addEventListener('change', renderLogs);
 /*  SETTINGS tab                                                             */
 /* ========================================================================= */
 async function loadSettings() {
-  const d = await api('/config');
+  const d = await runOperation(() => api('/config'), 'Failed to load settings');
   $('#settings-prompt').value = d.synthesis_prompt || '';
   $('#settings-interval').value = d.research_interval_hours;
   loadTags();
@@ -429,16 +521,22 @@ async function loadSettings() {
 }
 
 $('#save-prompt').addEventListener('click', async () => {
-  await post('/config', {synthesis_prompt: $('#settings-prompt').value});
+  await runOperation(
+    () => post('/config', {synthesis_prompt: $('#settings-prompt').value}),
+    'Failed to save synthesis prompt'
+  );
 });
 
 $('#save-interval').addEventListener('click', async () => {
-  await post('/config', {research_interval_hours: parseInt($('#settings-interval').value, 10)});
+  await runOperation(
+    () => post('/config', {research_interval_hours: parseInt($('#settings-interval').value, 10)}),
+    'Failed to save interval'
+  );
 });
 
 /* --- Tags --- */
 async function loadTags() {
-  const d = await api('/tags');
+  const d = await runOperation(() => api('/tags'), 'Failed to load tags');
   const tb = $('#tags-body');
   if (!d.items.length) { tb.innerHTML = '<tr><td colspan="3" class="empty">No tags</td></tr>'; return; }
   tb.innerHTML = d.items.map(t =>
@@ -449,19 +547,22 @@ async function loadTags() {
 $('#add-tag').addEventListener('click', async () => {
   const label = $('#tag-label').value.trim();
   if (!label) return;
-  await post('/tags', {label, tag_type: $('#tag-type').value});
+  await runOperation(
+    () => post('/tags', {label, tag_type: $('#tag-type').value}),
+    'Failed to add tag'
+  );
   $('#tag-label').value = '';
-  loadTags();
+  await loadTags();
 });
 
 window.removeTag = async function(id) {
-  await del('/tags/' + id);
-  loadTags();
+  await runOperation(() => del('/tags/' + id), 'Failed to remove tag');
+  await loadTags();
 };
 
 /* --- Feeds --- */
 async function loadFeeds() {
-  const d = await api('/feeds');
+  const d = await runOperation(() => api('/feeds'), 'Failed to load feeds');
   const tb = $('#feeds-body');
   if (!d.items.length) { tb.innerHTML = '<tr><td colspan="3" class="empty">No feeds</td></tr>'; return; }
   tb.innerHTML = d.items.map(f =>
@@ -473,15 +574,15 @@ $('#add-feed').addEventListener('click', async () => {
   const source = $('#feed-source').value.trim();
   const url = $('#feed-url').value.trim();
   if (!source || !url) return;
-  await post('/feeds', {source, url});
+  await runOperation(() => post('/feeds', {source, url}), 'Failed to add feed');
   $('#feed-source').value = '';
   $('#feed-url').value = '';
-  loadFeeds();
+  await loadFeeds();
 });
 
 window.removeFeed = async function(id) {
-  await del('/feeds/' + id);
-  loadFeeds();
+  await runOperation(() => del('/feeds/' + id), 'Failed to remove feed');
+  await loadFeeds();
 };
 
 /* ========================================================================= */
@@ -555,7 +656,7 @@ function ideaStatusBadge(status) {
 /* ========================================================================= */
 /*  Boot                                                                     */
 /* ========================================================================= */
-loadStatus();
+loadStatus().catch(() => {});
 connectWS();
 </script>
 </body>

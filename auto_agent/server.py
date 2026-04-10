@@ -30,6 +30,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await brain.start()
     yield
     await brain.shutdown()
+    await ws.hub.close_all()
     conn.close()
 
 

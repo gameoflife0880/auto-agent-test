@@ -43,6 +43,16 @@ class EventHub:
     def client_count(self) -> int:
         return len(self._clients)
 
+    async def close_all(self) -> None:
+        """Close and remove all currently connected websocket clients."""
+        clients = list(self._clients)
+        self._clients.clear()
+        for ws in clients:
+            try:
+                await ws.close(code=1001, reason="Server shutting down")
+            except Exception:
+                continue
+
 
 # Module-level hub — imported by other modules to broadcast events.
 hub = EventHub()
