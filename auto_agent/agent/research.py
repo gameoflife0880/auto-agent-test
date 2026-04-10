@@ -7,7 +7,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Callable, Mapping
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import feedparser  # type: ignore[import-untyped]
@@ -16,6 +16,15 @@ import httpx
 from auto_agent.agent.codex import run_codex
 from auto_agent.config import Config
 from auto_agent.normalize import article_id_from_url, sha256_hex
+
+_DEFAULT_SEED_FEEDS: tuple[tuple[str, str, int], ...] = (
+    ("BBC News Top Stories", "https://feeds.bbci.co.uk/news/rss.xml", 10),
+    ("The Rundown AI", "https://rss.beehiiv.com/feeds/2R3C6Bt5wj.xml", 10),
+    ("TechCrunch", "http://feeds.feedburner.com/TechCrunch/", 10),
+    ("Hacker News (Top)", "https://hnrss.org/frontpage?points=100", 10),
+    ("The Verge", "https://www.theverge.com/rss/index.xml", 10),
+    ("Product Hunt", "https://www.producthunt.com/feed", 10),
+)
 
 
 def _extract_published(entry: Any) -> int | None:
@@ -96,26 +105,27 @@ async def process_feed(
     return inserted
 
 
-def _ensure_seed_feeds(config: Config, conn: sqlite3.Connection) -> None:
-    """Seed configured feeds into DB when the feeds table is empty."""
+def _ensure_seed_feeds(conn: sqlite3.Connection) -> None:
+    """Seed default feeds into DB when the feeds table is empty."""
     row = conn.execute("SELECT COUNT(*) AS c FROM feeds").fetchone()
     if row is None or int(row["c"]) > 0:
         return
 
-    for feed in config.feeds:
+    # Config is static-only; default feeds are seeded from code on first run.
+    for source, url, max_items in _DEFAULT_SEED_FEEDS:
         conn.execute(
             """
             INSERT OR IGNORE INTO feeds (id, source, url, max_items, active, discovered_by)
-            VALUES (lower(hex(randomblob(6))), ?, ?, ?, 1, 'config')
+            VALUES (lower(hex(randomblob(6))), ?, ?, ?, 1, 'agent')
             """,
-            (feed.source, feed.url, feed.max_items),
+            (source, url, max_items),
         )
     conn.commit()
 
 
-async def run_rss_fetch(config: Config, conn: sqlite3.Connection) -> dict[str, int]:
+async def run_rss_fetch(conn: sqlite3.Connection) -> dict[str, int]:
     """Fetch all active feeds from DB and return ingestion stats."""
-    _ensure_seed_feeds(config, conn)
+    _ensure_seed_feeds(conn)
 
     feeds = conn.execute(
         "SELECT id, source, url, max_items FROM feeds WHERE active = 1 ORDER BY source"
@@ -285,7 +295,7 @@ async def run_analysis(
             continue
 
         combined = (
-            f"{original}\n\nAdditional context ({datetime.utcnow().isoformat()}Z):\n"
+            f"{original}\n\nAdditional context ({datetime.now(timezone.utc).isoformat()}):\n"
             f"{context}"
         ).strip()
         conn.execute(
