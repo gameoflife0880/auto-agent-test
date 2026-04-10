@@ -115,3 +115,23 @@ async def test_builder_marks_failed_on_timeout(
     assert stored is not None
     assert stored["status"] == "failed"
     assert "timed out" in str(stored["decline_reason"])
+
+
+@pytest.mark.asyncio
+async def test_builder_passes_absolute_project_dir_as_working_dir(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    idea_id = _idea_id(conn)
+    projects_root = tmp_path / "projects-working-dir"
+    run_mock = AsyncMock(
+        return_value=CodexResult(stdout="done", stderr="", exit_code=0)
+    )
+
+    with patch("auto_agent.agent.builder.run_codex", new=run_mock):
+        await build_approved_idea(conn, idea_id, projects_root=projects_root)
+
+    assert run_mock.await_count == 1
+    call = run_mock.await_args
+    assert call is not None
+    _, kwargs = call
+    assert kwargs["working_dir"] == str(projects_root / "cli-task-runner")
