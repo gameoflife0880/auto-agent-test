@@ -102,6 +102,10 @@ class AgentBrain:
                 return {"started": False, "status": state["status"]}
 
             self._cancel_event = asyncio.Event()
+            update_idea_status(self._conn, idea_id, "approved")
+            approved = get_idea_by_id(self._conn, idea_id)
+            if approved is not None:
+                await emit_idea_update(approved)
             set_agent_status(self._conn, "implementing", current_idea_id=idea_id)
             update_idea_status(self._conn, idea_id, "implementing")
             await self._log(
