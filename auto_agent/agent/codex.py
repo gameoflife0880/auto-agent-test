@@ -69,8 +69,10 @@ async def run_codex(
         cwd=working_dir,
     )
     assert proc.stdin is not None  # guaranteed by PIPE  # noqa: S101
-    proc.stdin.write(prompt.encode())
-    proc.stdin.close()
+    try:
+        proc.stdin.write(prompt.encode())
+    finally:
+        proc.stdin.close()
 
     stderr_task: asyncio.Task[bytes] | None = None
     if proc.stderr is not None:
