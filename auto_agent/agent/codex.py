@@ -68,6 +68,10 @@ async def run_codex(
         cwd=working_dir,
     )
 
+    stderr_task: asyncio.Task[bytes] | None = None
+    if proc.stderr is not None:
+        stderr_task = asyncio.create_task(_stream_stderr(proc, cancel_event))
+
     stdout_lines: list[str] = []
     try:
         stdout_lines = await asyncio.wait_for(
@@ -77,11 +81,15 @@ async def run_codex(
     except asyncio.TimeoutError:
         proc.terminate()
         await proc.wait()
+        if stderr_task is not None:
+            stderr_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await stderr_task
         raise CodexTimeoutError(f"Codex subprocess timed out after {timeout}s")
 
     stderr_data = b""
-    if proc.stderr is not None:
-        stderr_data = await proc.stderr.read()
+    if stderr_task is not None:
+        stderr_data = await stderr_task
 
     await proc.wait()
 
@@ -112,6 +120,50 @@ async def _stream_output(
             on_output(line)
 
     return lines
+
+
+async def _stream_stderr(
+    proc: asyncio.subprocess.Process,
+    cancel_event: asyncio.Event | None,
+) -> bytes:
+    """Read stderr in chunks to avoid pipe-buffer deadlocks."""
+    chunks: list[bytes] = []
+    assert proc.stderr is not None  # guaranteed by PIPE  # noqa: S101
+
+    while True:
+        chunk = await _read_stderr_or_cancel(proc, cancel_event)
+        if not chunk:
+            break
+        chunks.append(chunk)
+
+    return b"".join(chunks)
+
+
+async def _read_stderr_or_cancel(
+    proc: asyncio.subprocess.Process,
+    cancel_event: asyncio.Event | None,
+) -> bytes:
+    """Read one stderr chunk unless *cancel_event* requests termination."""
+    assert proc.stderr is not None  # guaranteed by PIPE  # noqa: S101
+    if cancel_event is None:
+        return await proc.stderr.read(8192)
+
+    read_task = asyncio.create_task(proc.stderr.read(8192))
+    cancel_task = asyncio.create_task(cancel_event.wait())
+    done, pending = await asyncio.wait(
+        {read_task, cancel_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+
+    for task in pending:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+    if cancel_task in done and cancel_event.is_set():
+        return b""
+
+    return await read_task
 
 
 async def _readline_or_cancel(

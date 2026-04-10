@@ -38,7 +38,8 @@ def _make_fake_process(
 
     # stderr: async read returns full blob
     stderr_mock = MagicMock()
-    stderr_mock.read = AsyncMock(return_value=stderr)
+    stderr_iter = iter([stderr, b""] if stderr else [b""])
+    stderr_mock.read = AsyncMock(side_effect=lambda _size=-1: next(stderr_iter))
     proc.stderr = stderr_mock
 
     proc.terminate = MagicMock()
@@ -177,6 +178,47 @@ class TestRunCodex:
 
         assert result.exit_code == 1
         assert result.stderr == "fatal\n"
+
+    @pytest.mark.asyncio
+    async def test_large_stderr_is_drained_while_stdout_waits(self) -> None:
+        """stderr draining starts concurrently so the run cannot deadlock."""
+        stderr_started = asyncio.Event()
+        stdout_release = asyncio.Event()
+        stderr_blob = b"x" * (128 * 1024 + 1)
+        first_read = True
+
+        async def _stdout_readline() -> bytes:
+            await stdout_release.wait()
+            return b""
+
+        async def _stderr_read(_size: int = -1) -> bytes:
+            nonlocal first_read
+            if first_read:
+                first_read = False
+                stderr_started.set()
+                stdout_release.set()
+                return stderr_blob
+            return b""
+
+        fake_proc = AsyncMock()
+        fake_proc.returncode = 0
+        stdout_mock = MagicMock()
+        stdout_mock.readline = AsyncMock(side_effect=_stdout_readline)
+        fake_proc.stdout = stdout_mock
+        stderr_mock = MagicMock()
+        stderr_mock.read = AsyncMock(side_effect=_stderr_read)
+        fake_proc.stderr = stderr_mock
+        fake_proc.terminate = MagicMock()
+        fake_proc.wait = AsyncMock()
+
+        with (
+            patch("auto_agent.agent.codex.shutil.which", return_value="/usr/bin/codex"),
+            patch("asyncio.create_subprocess_exec", return_value=fake_proc),
+        ):
+            result = await asyncio.wait_for(run_codex("prompt", timeout=5), timeout=1)
+
+        assert stderr_started.is_set()
+        assert len(result.stderr.encode()) == len(stderr_blob)
 
     @pytest.mark.asyncio
     async def test_working_dir_passed_to_subprocess(self) -> None:

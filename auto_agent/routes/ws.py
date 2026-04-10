@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from typing import Any
 
@@ -29,15 +28,11 @@ class EventHub:
 
     async def broadcast(self, event: dict[str, Any]) -> None:
         """Send an event to every connected client."""
-        payload = json.dumps(event)
-        dead: list[WebSocket] = []
-        for ws in self._clients:
+        for ws in list(self._clients):
             try:
-                await ws.send_text(payload)
+                await ws.send_json(event)
             except Exception:
-                dead.append(ws)
-        for ws in dead:
-            self._clients.discard(ws)
+                self._clients.discard(ws)
 
     @property
     def client_count(self) -> int:

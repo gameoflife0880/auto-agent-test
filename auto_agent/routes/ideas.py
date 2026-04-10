@@ -33,18 +33,6 @@ async def approve_idea(request: Request, idea_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Idea not found")
 
     brain = request.app.state.brain
-    state = brain.get_status()
-    if state["status"] != "idle":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Agent is busy ({state['status']}); only one build can run at a time.",
-        )
-
-    update_idea_status(conn, idea_id, "approved")
-    updated = get_idea_by_id(conn, idea_id)
-    if updated is not None:
-        await emit_idea_update(updated)
-
     result = await brain.trigger_implementation(idea_id)
     if not result["started"]:
         raise HTTPException(
