@@ -120,7 +120,7 @@ class AgentBrain:
     async def _run_research_cycle(self) -> None:
         """Execute researching -> synthesizing -> idle."""
         try:
-            rss_stats = await run_rss_fetch(self._config, self._conn)
+            rss_stats = await run_rss_fetch(self._conn)
             await self._log(
                 "RSS fetch complete: "
                 f"{rss_stats['articles_inserted']} new articles from "

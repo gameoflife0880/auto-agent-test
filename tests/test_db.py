@@ -6,6 +6,7 @@ from typing import Any
 
 from auto_agent.db import (
     connect,
+    get_idea_by_id,
     get_articles,
     get_feeds,
     get_ideas,
@@ -14,6 +15,7 @@ from auto_agent.db import (
     insert_feed,
     insert_idea,
     insert_tag,
+    update_idea_status,
 )
 
 
@@ -69,3 +71,34 @@ def test_crud_operations_and_article_dedup(tmp_path: Any) -> None:
     assert len(ideas) == 1
     assert len(articles) == 1
     assert articles[0]["title"] == "duplicate-title"
+
+
+def test_update_idea_status_keeps_optional_fields_when_not_provided(
+    tmp_path: Any,
+) -> None:
+    """Status-only updates should not erase decline_reason or project_path."""
+    conn = connect(tmp_path / "db.sqlite3")
+    try:
+        idea_id = insert_idea(
+            conn,
+            title="Idea",
+            description="Build tool",
+            why_now="Demand exists",
+            effort_estimate="2d",
+        )
+        update_idea_status(
+            conn,
+            idea_id,
+            "declined",
+            decline_reason="not useful",
+            project_path="projects/idea",
+        )
+        update_idea_status(conn, idea_id, "approved")
+        updated = get_idea_by_id(conn, idea_id)
+    finally:
+        conn.close()
+
+    assert updated is not None
+    assert updated["status"] == "approved"
+    assert updated["decline_reason"] == "not useful"
+    assert updated["project_path"] == "projects/idea"

@@ -406,9 +406,18 @@ let newsPage = 0;
 const NEWS_PER_PAGE = 20;
 
 async function loadNews() {
+  const params = new URLSearchParams({
+    page: String(newsPage + 1),
+    per_page: String(NEWS_PER_PAGE),
+  });
+  const sourceFilter = new URLSearchParams(window.location.search).get('source');
+  const tagFilter = new URLSearchParams(window.location.search).get('tag');
+  if (sourceFilter) params.set('source', sourceFilter);
+  if (tagFilter) params.set('tag', tagFilter);
+
   const d = await runOperation(
-    () => api('/articles?limit=' + NEWS_PER_PAGE + '&offset=' + (newsPage * NEWS_PER_PAGE)),
-    'Failed to load articles'
+    () => api('/news?' + params.toString()),
+    'Failed to load news'
   );
   const tb = $('#news-body');
   if (!d.items.length) { tb.innerHTML = '<tr><td colspan="4" class="empty">No articles yet</td></tr>'; return; }

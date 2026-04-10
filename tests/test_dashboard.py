@@ -104,20 +104,20 @@ class TestConfigRoutes:
 
 
 # --------------------------------------------------------------------------- #
-# Articles / News routes
+# News routes
 # --------------------------------------------------------------------------- #
 
 
-class TestArticleRoutes:
+class TestNewsRoutes:
     def test_empty(self, app_client: TestClient) -> None:
-        r = app_client.get("/api/articles")
+        r = app_client.get("/api/news")
         assert r.json()["items"] == []
 
     def test_pagination(self, app_client: TestClient) -> None:
         conn = _db(app_client)
         for i in range(5):
             insert_article(conn, source="src", title=f"Article {i}")
-        r = app_client.get("/api/articles?limit=2&offset=0")
+        r = app_client.get("/api/news?page=1&per_page=2")
         d = r.json()
         assert len(d["items"]) == 2
         assert d["has_more"] is True
@@ -125,8 +125,28 @@ class TestArticleRoutes:
     def test_no_more(self, app_client: TestClient) -> None:
         conn = _db(app_client)
         insert_article(conn, source="s", title="only one")
-        r = app_client.get("/api/articles?limit=20&offset=0")
+        r = app_client.get("/api/news?page=1&per_page=20")
         assert r.json()["has_more"] is False
+
+    def test_filters_source_and_tag(self, app_client: TestClient) -> None:
+        conn = _db(app_client)
+        insert_article(
+            conn,
+            source="tech",
+            title="AI infra launch",
+            matched_tags=["ai", "infrastructure"],
+        )
+        insert_article(
+            conn,
+            source="finance",
+            title="Markets update",
+            matched_tags=["macro"],
+        )
+
+        r = app_client.get("/api/news?page=1&per_page=20&source=tech&tag=ai")
+        items = r.json()["items"]
+        assert len(items) == 1
+        assert items[0]["source"] == "tech"
 
 
 # --------------------------------------------------------------------------- #

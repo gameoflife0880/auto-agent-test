@@ -12,28 +12,3 @@ schedule:
   research_interval_hours: 24
 
 projects_dir: projects
-
-feeds:
-  - source: "BBC News Top Stories"
-    url: "https://feeds.bbci.co.uk/news/rss.xml"
-    max_items: 10
-
-  - source: "The Rundown AI"
-    url: "https://rss.beehiiv.com/feeds/2R3C6Bt5wj.xml"
-    max_items: 10
-
-  - source: "TechCrunch"
-    url: "http://feeds.feedburner.com/TechCrunch/"
-    max_items: 10
-
-  - source: "Hacker News (Top)"
-    url: "https://hnrss.org/frontpage?points=100"
-    max_items: 10
-
-  - source: "The Verge"
-    url: "https://www.theverge.com/rss/index.xml"
-    max_items: 10
-
-  - source: "Product Hunt"
-    url: "https://www.producthunt.com/feed"
-    max_items: 10

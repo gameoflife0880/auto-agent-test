@@ -344,13 +344,26 @@ def update_idea_status(
     idea_id: str,
     status: str,
     *,
-    decline_reason: str = "",
-    project_path: str = "",
+    decline_reason: str | None = None,
+    project_path: str | None = None,
 ) -> None:
+    """Update idea status and only mutate optional fields when explicitly provided."""
+    assignments = ["status = ?"]
+    params: list[Any] = [status]
+
+    if decline_reason is not None:
+        assignments.append("decline_reason = ?")
+        params.append(decline_reason)
+    if project_path is not None:
+        assignments.append("project_path = ?")
+        params.append(project_path)
+
+    assignments.append("updated_at = strftime('%s', 'now')")
+    params.append(idea_id)
+
     conn.execute(
-        "UPDATE ideas SET status = ?, decline_reason = ?, project_path = ?, "
-        "updated_at = strftime('%s', 'now') WHERE id = ?",
-        (status, decline_reason, project_path, idea_id),
+        f"UPDATE ideas SET {', '.join(assignments)} WHERE id = ?",
+        tuple(params),
     )
     conn.commit()
 
