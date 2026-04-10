@@ -133,7 +133,7 @@ label{display:block;font-size:12px;font-weight:600;margin-bottom:3px;color:#555}
         <label>Filter by status</label>
         <select id="idea-filter">
           <option value="">All</option>
-          <option value="pending">Pending</option>
+          <option value="pending" selected>Pending</option>
           <option value="approved">Approved</option>
           <option value="declined">Declined</option>
           <option value="completed">Completed</option>
@@ -142,7 +142,18 @@ label{display:block;font-size:12px;font-weight:600;margin-bottom:3px;color:#555}
       </div>
     </div>
     <table>
-      <thead><tr><th>Title</th><th>Status</th><th>Effort</th><th>Actions</th></tr></thead>
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Description</th>
+          <th>Tech Stack</th>
+          <th>Why Now</th>
+          <th>Alternatives</th>
+          <th>Effort</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
       <tbody id="ideas-body"></tbody>
     </table>
   </div>
@@ -314,28 +325,38 @@ async function loadIdeas() {
   const q = f ? '?status=' + f : '';
   const d = await api('/ideas' + q);
   const tb = $('#ideas-body');
-  if (!d.items.length) { tb.innerHTML = '<tr><td colspan="4" class="empty">No ideas yet</td></tr>'; return; }
+  if (!d.items.length) { tb.innerHTML = '<tr><td colspan="8" class="empty">No ideas yet</td></tr>'; return; }
   tb.innerHTML = d.items.map(i => {
     let actions = '';
     if (i.status === 'pending') {
       actions = `<button class="btn btn-sm btn-success" onclick="approveIdea('${i.id}')">Approve</button> `
         + `<button class="btn btn-sm btn-danger" onclick="declineIdea('${i.id}')">Decline</button>`;
     }
-    return `<tr><td>${esc(i.title)}</td><td><span class="badge badge-${i.status === 'idle' ? 'idle' : i.status === 'approved' ? 'implementing' : 'idle'}">${esc(i.status)}</span></td><td>${esc(i.effort_estimate)}</td><td>${actions}</td></tr>`;
+    const tech = Array.isArray(i.tech_stack) ? i.tech_stack.join(', ') : parseJsonArray(i.tech_stack).join(', ');
+    return `<tr>
+      <td>${esc(i.title)}</td>
+      <td>${esc(i.description)}</td>
+      <td>${esc(tech || '--')}</td>
+      <td>${esc(i.why_now)}</td>
+      <td>${esc(i.existing_alternatives || '--')}</td>
+      <td>${esc(i.effort_estimate)}</td>
+      <td><span class="badge badge-${ideaStatusBadge(i.status)}">${esc(i.status)}</span></td>
+      <td>${actions}</td>
+    </tr>`;
   }).join('');
 }
 
 $('#idea-filter').addEventListener('change', loadIdeas);
 
 window.approveIdea = async function(id) {
-  await put('/ideas/' + id, {status: 'approved'});
+  await post('/ideas/' + id + '/approve', {});
   loadIdeas();
 };
 
 window.declineIdea = async function(id) {
   const reason = prompt('Reason for declining:');
   if (reason === null) return;
-  await put('/ideas/' + id, {status: 'declined', decline_reason: reason});
+  await post('/ideas/' + id + '/decline', {reason});
   loadIdeas();
 };
 
@@ -494,6 +515,23 @@ function esc(s) {
   const d = document.createElement('div');
   d.textContent = String(s);
   return d.innerHTML;
+}
+
+function parseJsonArray(v) {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  try {
+    const x = JSON.parse(v);
+    return Array.isArray(x) ? x : [];
+  } catch {
+    return [];
+  }
+}
+
+function ideaStatusBadge(status) {
+  if (status === 'approved' || status === 'implementing' || status === 'completed') return 'implementing';
+  if (status === 'pending') return 'researching';
+  return 'idle';
 }
 
 /* ========================================================================= */

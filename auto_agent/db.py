@@ -166,6 +166,21 @@ def get_articles(conn: sqlite3.Connection, *, limit: int = 50) -> list[dict[str,
     return [dict(r) for r in rows]
 
 
+def get_high_relevance_articles(
+    conn: sqlite3.Connection,
+    *,
+    threshold: float,
+    limit: int = 30,
+) -> list[dict[str, Any]]:
+    """Return the highest relevance articles at or above *threshold*."""
+    rows = conn.execute(
+        "SELECT * FROM articles WHERE relevance_score > ? "
+        "ORDER BY relevance_score DESC, created_at DESC LIMIT ?",
+        (threshold, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 # --- tags ----------------------------------------------------------------- #
 
 
@@ -188,6 +203,24 @@ def insert_tag(
 def get_tags(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute("SELECT * FROM tags ORDER BY label").fetchall()
     return [dict(r) for r in rows]
+
+
+def get_active_tags(
+    conn: sqlite3.Connection,
+    *,
+    tag_type: str | None = None,
+) -> list[str]:
+    """Return active tag labels, optionally filtered by type."""
+    if tag_type is None:
+        rows = conn.execute(
+            "SELECT label FROM tags WHERE active = 1 ORDER BY label"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT label FROM tags WHERE active = 1 AND type = ? ORDER BY label",
+            (tag_type,),
+        ).fetchall()
+    return [str(r["label"]) for r in rows]
 
 
 def delete_tag(conn: sqlite3.Connection, tag_id: str) -> bool:
@@ -267,9 +300,41 @@ def insert_idea(
     return iid
 
 
-def get_ideas(conn: sqlite3.Connection, *, limit: int = 50) -> list[dict[str, Any]]:
+def get_ideas(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 50,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    if status is None:
+        rows = conn.execute(
+            "SELECT * FROM ideas ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM ideas WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+            (status, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_idea_by_id(conn: sqlite3.Connection, idea_id: str) -> dict[str, Any] | None:
+    """Return one idea row by id, if present."""
+    row = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_declined_ideas(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Return previously declined ideas with reasons."""
     rows = conn.execute(
-        "SELECT * FROM ideas ORDER BY created_at DESC LIMIT ?", (limit,)
+        "SELECT id, title, description, decline_reason "
+        "FROM ideas WHERE status = 'declined' "
+        "ORDER BY updated_at DESC LIMIT ?",
+        (limit,),
     ).fetchall()
     return [dict(r) for r in rows]
 
