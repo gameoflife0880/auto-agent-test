@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Any, Generator
+from typing import Any, Generator, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -54,7 +54,7 @@ def app_client(tmp_path: Any) -> Generator[TestClient, None, None]:
 
 def _db(client: TestClient) -> sqlite3.Connection:
     """Get the db connection from the running app."""
-    return client.app.state.db  # type: ignore[attr-defined]
+    return cast(sqlite3.Connection, cast(Any, client.app).state.db)
 
 
 # --------------------------------------------------------------------------- #
@@ -145,7 +145,7 @@ class TestIdeaRoutes:
         insert_idea(conn, title="B", description="d", why_now="w", effort_estimate="1d")
         # Approve one
         ideas = app_client.get("/api/ideas").json()["items"]
-        app_client.put(f"/api/ideas/{ideas[0]['id']}", json={"status": "approved"})
+        app_client.post(f"/api/ideas/{ideas[0]['id']}/approve")
         r = app_client.get("/api/ideas?status=pending")
         assert len(r.json()["items"]) == 1
 
@@ -154,19 +154,18 @@ class TestIdeaRoutes:
         iid = insert_idea(
             conn, title="X", description="d", why_now="w", effort_estimate="1d"
         )
-        r = app_client.put(
-            f"/api/ideas/{iid}",
-            json={"status": "declined", "decline_reason": "not relevant"},
+        r = app_client.post(
+            f"/api/ideas/{iid}/decline", json={"reason": "not relevant"}
         )
         assert r.json()["ok"] is True
 
-    def test_invalid_status(self, app_client: TestClient) -> None:
+    def test_decline_requires_reason(self, app_client: TestClient) -> None:
         conn = _db(app_client)
         iid = insert_idea(
             conn, title="Y", description="d", why_now="w", effort_estimate="1d"
         )
-        r = app_client.put(f"/api/ideas/{iid}", json={"status": "garbage"})
-        assert r.status_code == 400
+        r = app_client.post(f"/api/ideas/{iid}/decline", json={"reason": ""})
+        assert r.status_code == 422
 
 
 # --------------------------------------------------------------------------- #

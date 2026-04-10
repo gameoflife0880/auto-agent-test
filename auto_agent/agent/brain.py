@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from auto_agent.agent.research import run_analysis, run_rss_fetch
+from auto_agent.agent.synthesis import SynthesisError, run_synthesis
 from auto_agent.config import Config
 from auto_agent.db import (
     add_log,
@@ -17,7 +18,7 @@ from auto_agent.db import (
     set_agent_status,
     set_setting,
 )
-from auto_agent.routes.ws import emit_log, emit_status
+from auto_agent.routes.ws import emit_idea_update, emit_log, emit_status
 
 
 class AgentBrain:
@@ -90,6 +91,22 @@ class AgentBrain:
             "codex_cli": "ok" if shutil.which("codex") else "not_found",
         }
 
+    async def trigger_implementation(self, idea_id: str) -> dict[str, Any]:
+        """Transition to implementing for an approved idea, then back to idle."""
+        async with self._lock:
+            state = get_agent_state(self._conn)
+            if state["status"] != "idle":
+                return {"started": False, "status": state["status"]}
+
+            set_agent_status(self._conn, "implementing", current_idea_id=idea_id)
+            await self._log(
+                f"Implementation triggered for approved idea {idea_id}",
+                category="implementation",
+            )
+            await emit_status("implementing", current_idea_id=idea_id)
+            await self._transition("idle", "Implementation handoff complete")
+            return {"started": True, "status": "idle"}
+
     async def _run_research_cycle(self) -> None:
         """Execute researching -> synthesizing -> idle."""
         try:
@@ -104,7 +121,6 @@ class AgentBrain:
             if self._cancel_event.is_set():
                 return
 
-            await self._transition("synthesizing", "Starting Codex analysis")
             analysis_stats = await run_analysis(
                 self._conn,
                 self._config,
@@ -119,8 +135,26 @@ class AgentBrain:
                 category="research",
             )
             set_setting(self._conn, "last_research_at", str(int(time.time())))
+
+            if self._cancel_event.is_set():
+                return
+
+            await self._transition("synthesizing", "Starting Codex synthesis")
+            created = await run_synthesis(self._conn, cancel_event=self._cancel_event)
+            await self._log(
+                f"Synthesis complete: created {len(created)} pending ideas",
+                category="synthesis",
+            )
+            for idea in created:
+                await emit_idea_update(idea)
         except asyncio.CancelledError:
             raise
+        except SynthesisError as exc:
+            await self._log(
+                f"Synthesis failed: {exc}",
+                level="error",
+                category="synthesis",
+            )
         except Exception as exc:
             await self._log(
                 f"Research cycle failed: {exc}",
