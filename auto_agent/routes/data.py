@@ -8,15 +8,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from auto_agent.db import (
-    delete_feed,
-    delete_tag,
     get_articles,
-    get_feeds,
     get_ideas,
     get_logs,
-    get_tags,
-    insert_feed,
-    insert_tag,
     update_idea_status,
 )
 
@@ -81,68 +75,6 @@ async def update_idea(
     conn = request.app.state.db
     update_idea_status(conn, idea_id, body.status, decline_reason=body.decline_reason)
     return {"ok": True, "id": idea_id, "status": body.status}
-
-
-# --- Tags ----------------------------------------------------------------- #
-
-
-class TagCreate(BaseModel):
-    label: str
-    tag_type: str  # "interest" | "constraint"
-
-
-@router.get("/tags")
-async def list_tags(request: Request) -> dict[str, Any]:
-    return {"items": get_tags(request.app.state.db)}
-
-
-@router.post("/tags")
-async def create_tag(request: Request, body: TagCreate) -> dict[str, Any]:
-    if body.tag_type not in ("interest", "constraint"):
-        raise HTTPException(
-            status_code=400, detail="tag_type must be interest or constraint"
-        )
-    tid = insert_tag(request.app.state.db, label=body.label, tag_type=body.tag_type)
-    return {"ok": True, "id": tid}
-
-
-@router.delete("/tags/{tag_id}")
-async def remove_tag(request: Request, tag_id: str) -> dict[str, Any]:
-    if not delete_tag(request.app.state.db, tag_id):
-        raise HTTPException(status_code=404, detail="Tag not found")
-    return {"ok": True}
-
-
-# --- Feeds ---------------------------------------------------------------- #
-
-
-class FeedCreate(BaseModel):
-    source: str
-    url: str
-    max_items: int = 10
-
-
-@router.get("/feeds")
-async def list_feeds(request: Request) -> dict[str, Any]:
-    return {"items": get_feeds(request.app.state.db)}
-
-
-@router.post("/feeds")
-async def create_feed(request: Request, body: FeedCreate) -> dict[str, Any]:
-    fid = insert_feed(
-        request.app.state.db,
-        source=body.source,
-        url=body.url,
-        max_items=body.max_items,
-    )
-    return {"ok": True, "id": fid}
-
-
-@router.delete("/feeds/{feed_id}")
-async def remove_feed(request: Request, feed_id: str) -> dict[str, Any]:
-    if not delete_feed(request.app.state.db, feed_id):
-        raise HTTPException(status_code=404, detail="Feed not found")
-    return {"ok": True}
 
 
 # --- Logs ----------------------------------------------------------------- #

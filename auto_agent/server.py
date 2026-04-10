@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
@@ -11,9 +10,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from auto_agent.agent.brain import AgentBrain
 from auto_agent.config import load_config
 from auto_agent.db import connect
-from auto_agent.routes import config, data, status, ws
+from auto_agent.routes import config, data, feeds, news, status, tags, ws
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -23,9 +23,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup: load config, open DB.  Shutdown: close DB."""
     cfg = load_config()
     conn = connect(cfg.database)
+    brain = AgentBrain(conn, cfg)
     app.state.config = cfg
     app.state.db = conn
+    app.state.brain = brain
+    await brain.start()
     yield
+    await brain.shutdown()
     conn.close()
 
 
@@ -34,6 +38,9 @@ app = FastAPI(title="auto-agent", lifespan=lifespan)
 app.include_router(status.router, prefix="/api")
 app.include_router(config.router, prefix="/api")
 app.include_router(data.router, prefix="/api")
+app.include_router(news.router, prefix="/api")
+app.include_router(feeds.router, prefix="/api")
+app.include_router(tags.router, prefix="/api")
 app.include_router(ws.router)
 
 if _STATIC_DIR.is_dir():
