@@ -58,7 +58,10 @@ async def run_codex(
 
     proc = await asyncio.create_subprocess_exec(
         codex_bin,
-        "--quiet",
+        "--ask-for-approval",
+        "never",
+        "exec",
+        "--skip-git-repo-check",
         prompt,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,

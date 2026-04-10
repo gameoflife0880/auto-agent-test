@@ -65,7 +65,9 @@ class TestRunCodex:
 
         with (
             patch("auto_agent.agent.codex.shutil.which", return_value="/usr/bin/codex"),
-            patch("asyncio.create_subprocess_exec", return_value=fake_proc),
+            patch(
+                "asyncio.create_subprocess_exec", return_value=fake_proc
+            ) as mock_exec,
         ):
             result = await run_codex("Say hello")
 
@@ -73,6 +75,16 @@ class TestRunCodex:
         assert result.stdout == "Hello, world!"
         assert result.stderr == "debug info\n"
         assert result.exit_code == 0
+        mock_exec.assert_called_once()
+        args, _ = mock_exec.call_args
+        assert args[:6] == (
+            "/usr/bin/codex",
+            "--ask-for-approval",
+            "never",
+            "exec",
+            "--skip-git-repo-check",
+            "Say hello",
+        )
 
     @pytest.mark.asyncio
     async def test_streaming_callback(self) -> None:

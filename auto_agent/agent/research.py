@@ -184,17 +184,17 @@ def _build_analysis_prompt(
     ]
 
     return (
-        "You are analyzing RSS news for an autonomous research agent.\\n"
-        "Return only valid JSON (no markdown).\\n\\n"
-        f"Articles JSON:\\n{json.dumps(payload, ensure_ascii=False)}\\n\\n"
-        f"Active interest tags: {json.dumps(interest_tags, ensure_ascii=False)}\\n"
-        f"Active constraint tags: {json.dumps(constraint_tags, ensure_ascii=False)}\\n"
-        f"Max web searches allowed: {max_searches}\\n\\n"
-        "Tasks:\\n"
-        "1) Score each article relevance (0.0-1.0) against interest tags.\\n"
-        "2) For high relevance articles with weak detail, search web for extra context.\\n"
-        "3) Suggest RSS feeds related to interest tags.\\n\\n"
-        "Output JSON schema:\\n"
+        "You are analyzing RSS news for an autonomous research agent.\n"
+        "Return only valid JSON (no markdown).\n\n"
+        f"Articles JSON:\n{json.dumps(payload, ensure_ascii=False)}\n\n"
+        f"Active interest tags: {json.dumps(interest_tags, ensure_ascii=False)}\n"
+        f"Active constraint tags: {json.dumps(constraint_tags, ensure_ascii=False)}\n"
+        f"Max web searches allowed: {max_searches}\n\n"
+        "Tasks:\n"
+        "1) Score each article relevance (0.0-1.0) against interest tags.\n"
+        "2) For high relevance articles with weak detail, search web for extra context.\n"
+        "3) Suggest RSS feeds related to interest tags.\n\n"
+        "Output JSON schema:\n"
         '{"scored_articles":[{"id":"...","relevance_score":0.0,"matched_tags":["..."]}],'
         '"additional_context":[{"article_id":"...","context":"..."}],'
         '"suggested_feeds":[{"source":"...","url":"...","reason":"..."}]}'
@@ -284,7 +284,10 @@ async def run_analysis(
         if context in original:
             continue
 
-        combined = f"{original}\\n\\nAdditional context ({datetime.utcnow().isoformat()}Z):\\n{context}".strip()
+        combined = (
+            f"{original}\n\nAdditional context ({datetime.utcnow().isoformat()}Z):\n"
+            f"{context}"
+        ).strip()
         conn.execute(
             "UPDATE articles SET content = ? WHERE id = ?", (combined, article_id)
         )

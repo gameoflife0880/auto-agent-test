@@ -138,7 +138,7 @@ async def build_approved_idea(
     try:
         result = await run_codex(
             prompt,
-            working_dir=project_path,
+            working_dir=str(project_dir),
             cancel_event=cancel_event,
             on_output=_on_codex_output,
             timeout=timeout_seconds,
