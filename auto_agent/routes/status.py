@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import shutil
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-
-from auto_agent.db import get_agent_state, set_agent_status
 
 router = APIRouter()
 
@@ -20,23 +17,16 @@ class StatusAction(BaseModel):
 @router.get("/status")
 async def get_status(request: Request) -> dict[str, Any]:
     """Return current agent state and Codex CLI health."""
-    state = get_agent_state(request.app.state.db)
-    codex_available = shutil.which("codex") is not None
-    return {
-        "status": state["status"],
-        "current_idea_id": state["current_idea_id"],
-        "codex_cli": "ok" if codex_available else "not_found",
-    }
+    return request.app.state.brain.get_status()
 
 
 @router.post("/status")
 async def post_status(request: Request, body: StatusAction) -> dict[str, Any]:
     """Control the agent — start research or stop."""
-    conn = request.app.state.db
+    brain = request.app.state.brain
     if body.action == "start_research":
-        set_agent_status(conn, "researching")
-        return {"status": "researching"}
+        result = await brain.start_research()
+        return {"status": result["status"], "started": result["started"]}
     if body.action == "stop":
-        set_agent_status(conn, "idle")
-        return {"status": "idle"}
+        return await brain.stop()
     raise HTTPException(status_code=400, detail=f"Unknown action: {body.action}")

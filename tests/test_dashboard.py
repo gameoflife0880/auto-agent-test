@@ -54,7 +54,7 @@ def app_client(tmp_path: Any) -> Generator[TestClient, None, None]:
 
 def _db(client: TestClient) -> sqlite3.Connection:
     """Get the db connection from the running app."""
-    return client.app.state.db  # type: ignore[union-attr]
+    return client.app.state.db  # type: ignore[attr-defined]
 
 
 # --------------------------------------------------------------------------- #
